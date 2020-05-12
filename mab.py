@@ -11,7 +11,7 @@ from online_stats import OnlineStats
 
 class GaussianEnv:
     """Bandit environment with normally distributed rewards.
-    
+
     Means and variances are randomized.
     """
 
@@ -164,6 +164,53 @@ class Ews:
         self.num_action_taken[action] += 1
 
 
+class BoltzmannExploration:
+    """Softmax aka Boltzmann exploration."""
+
+    def __init__(self, num_actions: int):
+        self.num_actions = num_actions
+        self.cum_rewards = np.zeros(num_actions)
+        self.num_action_taken = np.zeros(num_actions, dtype=int)
+
+    def act(self) -> int:
+        avg_rewards = self.cum_rewards / self.num_action_taken.clip(min=1)
+        action_probs = np.exp(log_softmax(avg_rewards))
+        action = np.random.choice(self.num_actions, p=action_probs)
+        return action
+
+    def update(self, action: int, reward: float):
+        self.cum_rewards[action] += reward
+        self.num_action_taken[action] += 1
+
+
+class Bedr:
+    """Boltzmann Exploration Done Right.
+
+    Cesa-Bianchi, Gentile, Lugosi, Neu
+    Boltzmann Exploration Done Right
+    https://papers.nips.cc/paper/7208-boltzmann-exploration-done-right.pdf
+    """
+
+    def __init__(self, num_actions: int, exploration_coef: float):
+        self.num_actions = num_actions
+        self.exploration_coef = exploration_coef
+        self.cum_rewards = np.zeros(num_actions)
+        self.num_action_taken = np.zeros(num_actions, dtype=int)
+
+    def act(self) -> int:
+        avg_rewards = self.cum_rewards / self.num_action_taken.clip(min=1)
+        noise = random_gumbel(self.num_actions)
+        scores = avg_rewards + self.exploration_coef * (
+            noise / np.sqrt(self.num_action_taken.clip(min=1))
+        )
+        action = tb_argmax(scores)
+        return action
+
+    def update(self, action: int, reward: float):
+        self.cum_rewards[action] += reward
+        self.num_action_taken[action] += 1
+
+
 def tb_argmax(xs):
     """Tie breaking argmax."""
     ids = np.where(xs == max(xs))[0]
@@ -172,6 +219,11 @@ def tb_argmax(xs):
 
 def log_softmax(logits):
     return logits - np.logaddexp.reduce(logits)
+
+
+def random_gumbel(size=None):
+    """Sample from random Gumbel distribution."""
+    return -np.log(-np.log(np.random.uniform(size=size)))
 
 
 def evaluate(env, agents, horizon):
@@ -203,6 +255,8 @@ for _ in range(num_trials):
         'ucb1': UCB1(num_actions),
         'exp3-1%': Exp3(num_actions, 0.01),
         'ews': Ews(num_actions),
+        'boltzmann': BoltzmannExploration(num_actions),
+        'bedr': Bedr(num_actions, 1.0),
     }
     cr = evaluate(env, agents, horizon)
     for name, cum_regret in cr.items():
